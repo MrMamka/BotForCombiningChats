@@ -1,7 +1,9 @@
 package bot
 
 import (
+	"BotForCombiningChats/chat"
 	"errors"
+	"fmt"
 	"log"
 	"os"
 
@@ -45,6 +47,7 @@ func (tb *TelegramBot) Start(isDebug bool) error {
 	log.Printf("Authorized on account %s", tb.bot.Self.UserName)
 
 	u := tgbotapi.NewUpdate(0)
+	u.Timeout = 180
 
 	updates := tb.bot.GetUpdatesChan(u)
 
@@ -53,9 +56,11 @@ func (tb *TelegramBot) Start(isDebug bool) error {
 			msgReq := update.Message
 			log.Printf("[%s] %s", msgReq.From.UserName, msgReq.Text)
 
-			switch msgReq.Text { // заменить на мапу
-			case "\\start":
+			switch msgReq.Text { //TODO: выделить в отдельную функцию
+			case "/start":
 				err = tb.startMsgHandler(msgReq)
+			case "/work":
+				err = tb.workMsgHandler(msgReq)
 			default:
 				err = tb.defaultMsgHandler(msgReq)
 			}
@@ -76,6 +81,24 @@ func (tb *TelegramBot) startMsgHandler(msgReq *tgbotapi.Message) error {
 		return err
 	}
 	return nil
+}
+
+func (tb *TelegramBot) workMsgHandler(msgReq *tgbotapi.Message) error {
+	combChat, _ := chat.NewCombinedChat("chess") //TODO: и сделать, чтобы это вводил пользователь
+	outputChan := combChat.Start()
+
+	for {
+		msg := <-outputChan
+
+		textResp := fmt.Sprintf("%s: %s", msg.Author, msg.Text) // TODO: Вынести в отдельную функцию
+
+		msgResp := tgbotapi.NewMessage(msgReq.Chat.ID, textResp)
+
+		_, err := tb.bot.Send(msgResp)
+		if err != nil {
+			return err
+		}
+	}
 }
 
 func (tb *TelegramBot) defaultMsgHandler(msgReq *tgbotapi.Message) error {
