@@ -1,8 +1,9 @@
 package main
 
 import (
-	bot "BotForCombiningChats/bot"
 	"log"
+
+	"github.com/MrMamka/combchats/internal/bot"
 )
 
 func main() {

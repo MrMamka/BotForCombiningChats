@@ -9,9 +9,9 @@ type TwitchChat struct {
 }
 
 func NewTwitchChat(channelName string) *TwitchChat {
-	result := new(TwitchChat)
-	result.channelName = channelName
-	return result
+	return &TwitchChat{
+		channelName: channelName,
+	}
 }
 
 func (tc *TwitchChat) Start() <-chan Message {
