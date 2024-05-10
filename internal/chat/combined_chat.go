@@ -12,7 +12,8 @@ type Message struct {
 }
 
 type Chat interface {
-	Start() <-chan Message
+	Start(chan<- Message)
+	Stop()
 }
 
 type CombinedChat struct {
@@ -22,8 +23,8 @@ type CombinedChat struct {
 type ChannelType int
 
 const (
-	ChannelTypeTwitch ChannelType = iota
-	ChannelTypeVk
+	TwitchChannelType ChannelType = iota
+	VkChannelType
 )
 
 type Channel struct {
@@ -31,32 +32,36 @@ type Channel struct {
 	Name string
 }
 
-// TODO: сообщать пользователя, если пользователя не существует
-func NewCombinedChat(channel Channel) (*CombinedChat, error) { //TODO: изменить конструктор, чтобы он принимал список название платформ и каналов
+// TODO: сообщать пользователю, если пользователя не существует
+func NewCombinedChat(channels []Channel) (*CombinedChat, error) {
 	result := new(CombinedChat)
-	switch {
-	case channel.Type == ChannelTypeTwitch:
-		result.chats = append(result.chats, NewTwitchChat(channel.Name))
-	case channel.Type == ChannelTypeVk:
-		result.chats = append(result.chats, NewVkChat(channel.Name))
-	default:
-		return nil, fmt.Errorf("undefined channel type")
-	}
 
+	for _, channel := range channels {
+		switch {
+		case channel.Type == TwitchChannelType:
+			result.chats = append(result.chats, NewTwitchChat(channel.Name))
+		case channel.Type == VkChannelType:
+			result.chats = append(result.chats, NewVkChat(channel.Name))
+		default:
+			return nil, fmt.Errorf("undefined channel type") // TODO: just ignore?
+		}
+	}
 	return result, nil
 }
 
-func (cc *CombinedChat) Start() <-chan Message {
+func (cc *CombinedChat) Start(stop <-chan struct{}) <-chan Message {
 	resultChan := make(chan Message)
 
 	go func() {
 		for _, chat := range cc.chats {
 			go func(chat Chat) {
-				inputChan := chat.Start()
-				for {
-					resultChan <- <-inputChan
-				}
+				chat.Start(resultChan)
 			}(chat)
+		}
+
+		<-stop
+		for _, chat := range cc.chats {
+			chat.Stop()
 		}
 	}()
 

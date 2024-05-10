@@ -1,11 +1,14 @@
 package chat
 
 import (
+	"fmt"
+
 	"github.com/gempir/go-twitch-irc/v4"
 )
 
 type TwitchChat struct {
 	channelName string
+	client      *twitch.Client
 }
 
 func NewTwitchChat(channelName string) *TwitchChat {
@@ -14,27 +17,49 @@ func NewTwitchChat(channelName string) *TwitchChat {
 	}
 }
 
-func (tc *TwitchChat) Start() <-chan Message {
-	resultChan := make(chan Message)
-
+func (tc *TwitchChat) Start(output chan<- Message) {
 	go func() {
-		client := twitch.NewAnonymousClient()
+		tc.client = twitch.NewAnonymousClient()
 
-		client.OnPrivateMessage(func(msg twitch.PrivateMessage) { // TODO: обрабатывать, когда сообщение - ответ на другое
-			resultChan <- Message{Text: msg.Message, Author: msg.User.DisplayName, Time: msg.Time}
+		tc.client.OnPrivateMessage(func(msg twitch.PrivateMessage) { // TODO: обрабатывать, когда сообщение - ответ на другое?
+			output <- Message{Text: msg.Message, Author: msg.User.DisplayName, Time: msg.Time}
 		})
 
-		//client.OnConnect(func() { //TODO: выводить пользователю connecting и connected
-		//	fmt.Println("Connected")
-		//})
+		tc.client.Join(tc.channelName)
 
-		client.Join(tc.channelName)
-
-		err := client.Connect()
+		err := tc.client.Connect()
 		if err != nil {
-			panic(err)
+			fmt.Printf("error in connect: %v\n", err)
 		}
 	}()
+}
 
-	return resultChan
+func (tc *TwitchChat) Stop() {
+	print("here stop\n")
+	tc.client.Disconnect()
+}
+
+type TwitchSender struct {
+	client  *twitch.Client
+	channel string
+}
+
+func NewTwitchSender(userName, channel, authToken string) *TwitchSender {
+	client := twitch.NewClient(userName, authToken)
+
+	go client.Connect() // TODO: передавать канал, чтобы убивать эту горутину
+
+	return &TwitchSender{
+		client:  client,
+		channel: channel,
+	}
+}
+
+func (ts *TwitchSender) Send(msg string) error {
+	ts.client.Say(ts.channel, msg)
+	return nil
+}
+
+func (tc *TwitchSender) Stop() {
+	tc.client.Disconnect()
 }

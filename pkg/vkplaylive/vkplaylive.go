@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
@@ -178,10 +180,22 @@ func createMessage(rawMsg rawMessageData) (Message, error) {
 type Client struct {
 	msgHandler func(Message)
 	channel    string
+	authToken  string
+	client     *http.Client
+	ws         *websocket.Conn
 }
 
 func NewAnonymousClient() *Client {
 	return &Client{}
+}
+
+func NewClient(authToken string) *Client {
+	return &Client{
+		authToken: authToken,
+		client: &http.Client{
+			Timeout: 15 * time.Second,
+		},
+	}
 }
 
 // Add handler to new messages from chat.
@@ -195,19 +209,15 @@ func (c *Client) Join(channel string) {
 	c.channel = channel
 }
 
-func (c *Client) handleMessages(ws *websocket.Conn) error {
+func (c *Client) handleMessages() error {
 	for {
 		var rawMessage rawMessageData
-		if err := ws.ReadJSON(&rawMessage); err != nil {
+		if err := c.ws.ReadJSON(&rawMessage); err != nil {
 			return fmt.Errorf("read error: %w", err) // TODO: do continue, not return
 		}
-		//fmt.Printf("Received: %+v\n", message)
 
 		msg, err := createMessage(rawMessage)
-		if err != nil {
-			return err // TODO: do continue, not return
-		}
-		if msg.Time == 0 {
+		if err != nil || msg.Time == 0 {
 			continue
 		}
 
@@ -219,18 +229,19 @@ func (c *Client) Connect() error {
 	headers := http.Header{}
 	headers.Add("Origin", originURL)
 
-	wsClient, _, err := websocket.DefaultDialer.Dial(wsConnectionAddr, headers)
+	var err error
+	c.ws, _, err = websocket.DefaultDialer.Dial(wsConnectionAddr, headers)
 	if err != nil {
 		return fmt.Errorf("dial error: %w", err)
 	}
-	defer wsClient.Close()
+	defer c.ws.Close()
 
 	token, err := getWebSocketToken()
 	if err != nil {
-		return fmt.Errorf("unable to get token: %w", err)
+		return fmt.Errorf("unable to get web socket token: %w", err)
 	}
 
-	err = initWebSocket(wsClient, token)
+	err = initWebSocket(c.ws, token)
 	if err != nil {
 		return fmt.Errorf("unable to initialize websocket: %w", err)
 	}
@@ -249,9 +260,64 @@ func (c *Client) Connect() error {
 		},
 		Method: 1,
 	}
-	if err := invokeMethod(wsClient, &connectToChatPayload); err != nil {
+	if err := invokeMethod(c.ws, &connectToChatPayload); err != nil {
 		return fmt.Errorf("connect to chat error: %w", err)
 	}
 
-	return c.handleMessages(wsClient)
+	return c.handleMessages()
+}
+
+func (c *Client) Disconnect() error {
+	return c.ws.Close()
+}
+
+type messageBlock struct {
+	Type        string `json:"type"`
+	Content     string `json:"content"`
+	Modificator string `json:"modificator,omitempty"`
+	URL         string `json:"url,omitempty"`
+	Explicit    bool   `json:"explicit,omitempty"`
+}
+
+func (c *Client) SendMessage(message string) error {
+	serializedMessage := c.serializeMessage(message)
+	serializedMessageJSON, err := json.Marshal(serializedMessage)
+	if err != nil {
+		return fmt.Errorf("error marshaling message: %v", err)
+	}
+
+	body := url.Values{}
+	body.Add("data", string(serializedMessageJSON))
+
+	url := fmt.Sprintf("https://api.live.vkplay.ru/v1/blog/%s/public_video_stream/chat", c.channel)
+	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body.Encode()))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Add("Authorization", "Bearer "+c.authToken)
+	req.Header.Add("Content-Type", "application/x-www-form-urlencoded")
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	fmt.Printf("Got response from vk: %v\n", resp.Header)
+
+	return nil
+}
+
+func (c *Client) serializeMessage(message string) []messageBlock {
+	var serializedMessage []messageBlock
+
+	if message != "" {
+		serializedMessage = append(serializedMessage, getTextBlock(message))
+	}
+
+	return serializedMessage
+}
+
+func getTextBlock(text string) messageBlock {
+	return messageBlock{Type: "text", Content: fmt.Sprintf(`["%s","unstyled",[]]`, text)}
 }
